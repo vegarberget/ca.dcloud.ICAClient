@@ -1,0 +1,13 @@
+--2026-02-28 14:56:10--  https://www.citrix.com/downloads/workspace-app/linux/workspace-app-for-linux-latest.html
+Resolving www.citrix.com (www.citrix.com)... 88.221.9.246, 2a02:26f0:1180:196::2aec, 2a02:26f0:1180:181::2aec
+Connecting to www.citrix.com (www.citrix.com)|88.221.9.246|:443... connected.
+HTTP request sent, awaiting response... 200 OK
+Length: unspecified [text/html]
+Saving to: ‘STDOUT’
+
+     0K .......... .......... .......... .......... .......... 18.5M
+    50K .......... .......... .......... .......... ..........  722K
+   100K ........                                               16.7T=0.07s
+
+2026-02-28 14:56:11 (1.48 MB/s) - written to stdout [111584]
+

@@ -110,24 +110,44 @@ modules: #Requirements as per Citrix's site, that aren't included in the Flatpak
         }
 
         # Download Workspace installer
-        WS_URL=$(wget -O - https://www.citrix.com/downloads/workspace-app/linux/workspace-app-for-linux-latest.html 2>/dev/null | sed -ne '/linuxx64.*tar.gz/ s/<a .* rel="\(.*\)" id="downloadcomponent">/https:\1/p' | sed -e 's/\r//g' | head -1)
+        echo "Fetching Workspace download page..."
+        WS_URL=$(wget -O - https://www.citrix.com/downloads/workspace-app/linux/workspace-app-for-linux-latest.html 2>/dev/null | grep -oP 'rel="\K//downloads\.citrix\.com/[^"]*linuxx64[^"]*\.tar\.gz' | head -1)
+        
         if [ -z "$WS_URL" ]; then
           echo "ERROR: Could not determine Workspace download URL"
+          echo "Trying alternative extraction method..."
+          WS_URL=$(wget -O - https://www.citrix.com/downloads/workspace-app/linux/workspace-app-for-linux-latest.html 2>/dev/null | grep -oP '//downloads\.citrix\.com/[^"]*linuxx64[^"]*\.tar\.gz' | head -1)
+        fi
+        
+        if [ -z "$WS_URL" ]; then
+          echo "ERROR: Could not extract Workspace download URL from page"
           exit 1
         fi
+        
+        # Convert protocol-relative URL to https
+        WS_URL="https:${WS_URL}"
+        echo "Workspace URL: $WS_URL"
+        
         download_with_retry "$WS_URL" /tmp/linuxx64.tar.gz
 
         # Download HDX RTME installer
-        HDXPAGE_URL=$(wget -O - https://www.citrix.com/downloads/workspace-app/additional-client-software/hdx-realtime-media-engine.html 2>/dev/null | grep -m 1 -e 'rel="https.*hdx-realtime-media-engine-.*html"' | sed -ne 's/<a .* rel="\(.*\)" id="downloadcomponent.*">/\1/p' | head -1)
+        echo "Fetching HDX RTME download page..."
+        HDXPAGE_URL=$(wget -O - https://www.citrix.com/downloads/workspace-app/additional-client-software/hdx-realtime-media-engine.html 2>/dev/null | grep -oP 'rel="\Khttps://[^"]*hdx-realtime-media-engine[^"]*\.html' | head -1)
+        
         if [ -z "$HDXPAGE_URL" ]; then
           echo "WARNING: Could not determine HDX RTME page URL, continuing without RTME support"
           HDXPAGE_URL=""
         else
-          HDX_URL=$(wget -O - "$HDXPAGE_URL" 2>/dev/null | sed -ne '/HDX.*zip/ s/<a .* rel="\(.*\)" id="downloadcomponent_3">/https:\1/p' | sed -e 's/\r//g' | head -1)
-          if [ -n "$HDX_URL" ]; then
-            download_with_retry "$HDX_URL" /tmp/hdx.zip
+          echo "HDX RTME page: $HDXPAGE_URL"
+          HDX_URL=$(wget -O - "$HDXPAGE_URL" 2>/dev/null | grep -oP 'rel="\K//downloads\.citrix\.com/[^"]*hdx[^"]*\.zip' | head -1)
+          
+          if [ -z "$HDX_URL" ]; then
+            echo "WARNING: Could not determine HDX RTME download URL from page"
           else
-            echo "WARNING: Could not determine HDX RTME download URL"
+            # Convert protocol-relative URL to https
+            HDX_URL="https:${HDX_URL}"
+            echo "HDX URL: $HDX_URL"
+            download_with_retry "$HDX_URL" /tmp/hdx.zip
           fi
         fi
 

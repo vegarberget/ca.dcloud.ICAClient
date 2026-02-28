@@ -65,20 +65,18 @@ jobs:
       - name: Validate manifest
         run: |
           echo "✓ Validating Flatpak manifest..."
-          if ! python3 -m json.tool < /dev/null 2>/dev/null; then
-            # Basic YAML validation
-            python3 << 'EOF'
-          import sys
-          try:
-            import yaml
-            with open('ca.dcloud.ICAClient.yml', 'r') as f:
-              yaml.safe_load(f)
-            print("✓ Manifest is valid YAML")
-          except Exception as e:
-            print(f"✗ Manifest validation failed: {e}")
-            sys.exit(1)
-          EOF
+          # Check file exists and is readable
+          if [ ! -f ca.dcloud.ICAClient.yml ]; then
+            echo "✗ Manifest file not found"
+            exit 1
           fi
+          # Basic YAML syntax check with yamllint
+          if command -v yamllint &> /dev/null; then
+            yamllint -d '{extends: relaxed}' ca.dcloud.ICAClient.yml
+          else
+            python3 -c "import yaml; yaml.safe_load(open('ca.dcloud.ICAClient.yml'))"
+          fi
+          echo "✓ Manifest is valid"
 
       - name: Validate desktop file
         run: |
@@ -87,28 +85,26 @@ jobs:
 
       - name: Build Flatpak bundle
         run: |
+          set -e
           echo "Starting Flatpak build..."
           mkdir -p flatpak-build
           
-          flatpak-builder \
+          if flatpak-builder \
             --user \
             --install \
             --disable-rofiles-fuse \
-            --sandbox \
-            --keep-build-dirs \
             --force-clean \
             --verbose \
             flatpak-build \
-            ca.dcloud.ICAClient.yml 2>&1 | tee build.log
-          
-          if [ ${PIPESTATUS[0]} -ne 0 ]; then
-            echo "✗ Flatpak build failed"
-            echo "=== Build Log ==="
+            ca.dcloud.ICAClient.yml 2>&1 | tee build.log; then
+            echo "✓ Flatpak build completed successfully"
+          else
+            BUILD_EXIT=$?
+            echo "✗ Flatpak build failed with exit code $BUILD_EXIT"
+            echo "=== Build Log (last 100 lines) ==="
             tail -100 build.log
-            exit 1
+            exit $BUILD_EXIT
           fi
-          
-          echo "✓ Flatpak build completed successfully"
 
       - name: Create Flatpak bundle
         run: |
@@ -150,11 +146,19 @@ jobs:
           - AppData: `ca.dcloud.ICAClient.appdata.xml`
           
           ## Build Log
-          Last 50 lines of build output:
+          Last 100 lines of build output:
           \`\`\`
-          $(tail -50 build.log 2>/dev/null || echo "No build log available")
+          $(tail -100 build.log 2>/dev/null || echo "No build log available")
           \`\`\`
+          
+          ## System Information
+          - OS: $(uname -a)
+          - Flatpak version: $(flatpak --version 2>/dev/null || echo "Not installed")
+          - Available disk space: $(df -h / | tail -1)
+          - Memory available: $(free -h | grep Mem)
           EOF
+          
+          echo "=== Build Report ===" 
           cat build-report.md
 
       - name: Upload build artifacts
@@ -174,7 +178,7 @@ jobs:
     needs: build
     if: |
       (github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')) ||
-      github.event.inputs.publish == 'true'
+      (github.event_name == 'workflow_dispatch' && github.event.inputs.publish == 'true')
 
     permissions:
       contents: write
@@ -193,15 +197,23 @@ jobs:
         run: |
           mkdir -p release-assets
           
+          # Check if artifacts directory exists
+          if [ ! -d artifacts ]; then
+            echo "⚠ No artifacts directory found, build may have failed"
+            exit 0
+          fi
+          
           # Find and copy flatpak bundle
           find artifacts -name "*.flatpak" -exec cp {} release-assets/ \; 2>/dev/null || true
           
-          # Create checksums
+          # Create checksums if artifact exists
           if [ -f release-assets/ca.dcloud.ICAClient.flatpak ]; then
             cd release-assets
             sha256sum ca.dcloud.ICAClient.flatpak > CHECKSUMS.sha256
-            echo "Release assets:"
+            echo "✓ Release assets prepared:"
             ls -lh
+          else
+            echo "⚠ No Flatpak bundle found in artifacts"
           fi
 
       - name: Create GitHub Release
@@ -227,17 +239,37 @@ jobs:
   notify:
     name: Build Notification
     runs-on: ubuntu-latest
-    needs: [build, publish]
+    needs: build
     if: always()
 
     steps:
       - name: Determine build status
         run: |
-          if [ "${{ needs.build.result }}" == "success" ]; then
-            echo "Build Status: ✅ SUCCESS"
-            echo "Build completed successfully"
-            exit 0
-          else
-            echo "Build Status: ❌ FAILED"
-            exit 1
-          fi
+          BUILD_RESULT="${{ needs.build.result }}"
+          
+          case "$BUILD_RESULT" in
+            success)
+              echo "✅ Build Status: SUCCESS"
+              echo "The Flatpak build completed successfully"
+              exit 0
+              ;;
+            failure)
+              echo "❌ Build Status: FAILED"
+              echo "The Flatpak build encountered an error"
+              exit 1
+              ;;
+            cancelled)
+              echo "⏸️  Build Status: CANCELLED"
+              echo "The workflow was cancelled"
+              exit 1
+              ;;
+            skipped)
+              echo "⊘ Build Status: SKIPPED"
+              echo "The build was skipped"
+              exit 0
+              ;;
+            *)
+              echo "❓ Build Status: UNKNOWN ($BUILD_RESULT)"
+              exit 1
+              ;;
+          esac
