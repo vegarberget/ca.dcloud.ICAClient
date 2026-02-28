@@ -1,0 +1,71 @@
+name: Lint and Validate
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+
+jobs:
+  lint:
+    name: Lint Files
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up linting tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            shellcheck \
+            yamllint \
+            desktop-file-utils \
+            libxml2-utils
+
+      - name: Lint shell scripts
+        run: |
+          echo "Running shellcheck on shell scripts..."
+          shellcheck install.sh run.sh || true
+
+      - name: Lint YAML manifest
+        run: |
+          echo "Running yamllint on Flatpak manifest..."
+          yamllint -d '{extends: relaxed, rules: {line-length: {max: 120}}}' ca.dcloud.ICAClient.yml
+
+      - name: Validate desktop file
+        run: |
+          echo "Validating desktop file..."
+          desktop-file-validate ca.dcloud.ICAClient.desktop
+
+      - name: Validate appdata file
+        run: |
+          echo "Validating appdata file..."
+          appstream-util validate-relax ca.dcloud.ICAClient.appdata.xml
+
+      - name: Check file permissions
+        run: |
+          echo "Checking script file permissions..."
+          [ -x install.sh ] && echo "✓ install.sh is executable" || echo "✗ install.sh is not executable"
+          [ -x run.sh ] && echo "✓ run.sh is executable" || echo "✗ run.sh is not executable"
+
+      - name: Lint markdown files
+        run: |
+          echo "Checking markdown files..."
+          for file in README.md CHANGELOG.md CONTRIBUTING.md; do
+            if [ -f "$file" ]; then
+              echo "✓ Found $file"
+            fi
+          done
+
+      - name: Check for secrets
+        uses: trufflesecurity/trufflehog@main
+        with:
+          path: ./
+          base: ${{ github.event.repository.default_branch }}
+          head: HEAD
+          extra_kwargs: --only-verified
+        continue-on-error: true

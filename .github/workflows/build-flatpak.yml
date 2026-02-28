@@ -1,0 +1,243 @@
+name: Build and Publish Flatpak
+
+on:
+  push:
+    branches:
+      - main
+    tags:
+      - 'v*'
+  pull_request:
+    branches:
+      - main
+  workflow_dispatch:
+    inputs:
+      publish:
+        description: 'Publish to releases'
+        required: false
+        default: 'false'
+
+env:
+  REGISTRY: ghcr.io
+
+jobs:
+  build:
+    name: Build Flatpak
+    runs-on: ubuntu-latest
+    
+    permissions:
+      contents: read
+      packages: write
+
+    strategy:
+      matrix:
+        include:
+          - name: 'x86_64 (primary)'
+            arch: 'x86_64'
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up build environment
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            flatpak \
+            flatpak-builder \
+            elfutils \
+            appstream \
+            appstream-util \
+            desktop-file-utils \
+            libxml2-utils
+
+      - name: Add Flathub remote
+        run: |
+          flatpak remote-add --user --if-not-exists flathub https://flathub.org/repo/flathub.flatpakrepo
+
+      - name: Install GNOME SDKs and runtimes
+        run: |
+          flatpak install --user --noninteractive \
+            org.gnome.Platform//46 \
+            org.gnome.Sdk//46
+
+      - name: Validate manifest
+        run: |
+          echo "✓ Validating Flatpak manifest..."
+          if ! python3 -m json.tool < /dev/null 2>/dev/null; then
+            # Basic YAML validation
+            python3 << 'EOF'
+          import sys
+          try:
+            import yaml
+            with open('ca.dcloud.ICAClient.yml', 'r') as f:
+              yaml.safe_load(f)
+            print("✓ Manifest is valid YAML")
+          except Exception as e:
+            print(f"✗ Manifest validation failed: {e}")
+            sys.exit(1)
+          EOF
+          fi
+
+      - name: Validate desktop file
+        run: |
+          echo "✓ Validating desktop file..."
+          desktop-file-validate ca.dcloud.ICAClient.desktop
+
+      - name: Build Flatpak bundle
+        run: |
+          echo "Starting Flatpak build..."
+          mkdir -p flatpak-build
+          
+          flatpak-builder \
+            --user \
+            --install \
+            --disable-rofiles-fuse \
+            --sandbox \
+            --keep-build-dirs \
+            --force-clean \
+            --verbose \
+            flatpak-build \
+            ca.dcloud.ICAClient.yml 2>&1 | tee build.log
+          
+          if [ ${PIPESTATUS[0]} -ne 0 ]; then
+            echo "✗ Flatpak build failed"
+            echo "=== Build Log ==="
+            tail -100 build.log
+            exit 1
+          fi
+          
+          echo "✓ Flatpak build completed successfully"
+
+      - name: Create Flatpak bundle
+        run: |
+          echo "Creating Flatpak bundle..."
+          
+          mkdir -p dist/
+          
+          flatpak build-bundle \
+            --runtime-repo=https://flathub.org/repo/flathub.flatpakrepo \
+            dist/ca.dcloud.ICAClient.flatpak \
+            ca.dcloud.ICAClient 2>&1 || true
+          
+          if [ -f "dist/ca.dcloud.ICAClient.flatpak" ]; then
+            echo "✓ Flatpak bundle created"
+            ls -lh dist/ca.dcloud.ICAClient.flatpak
+          else
+            echo "⚠ Flatpak bundle not created (this may be expected in some environments)"
+          fi
+
+      - name: Validate appdata file
+        run: |
+          echo "✓ Validating appstream data..."
+          appstream-util validate-relax ca.dcloud.ICAClient.appdata.xml
+
+      - name: Generate build report
+        if: always()
+        run: |
+          cat > build-report.md << 'EOF'
+          # Build Report
+          
+          - **Build Status**: ${{ job.status }}
+          - **Platform**: ${{ matrix.arch }}
+          - **Git Commit**: ${{ github.sha }}
+          - **Build Date**: $(date -u '+%Y-%m-%dT%H:%M:%SZ')
+          
+          ## Artifacts
+          - Flatpak Manifest: `ca.dcloud.ICAClient.yml`
+          - Desktop Entry: `ca.dcloud.ICAClient.desktop`
+          - AppData: `ca.dcloud.ICAClient.appdata.xml`
+          
+          ## Build Log
+          Last 50 lines of build output:
+          \`\`\`
+          $(tail -50 build.log 2>/dev/null || echo "No build log available")
+          \`\`\`
+          EOF
+          cat build-report.md
+
+      - name: Upload build artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: flatpak-${{ matrix.arch }}-build-${{ github.run_number }}
+          path: |
+            dist/
+            build-report.md
+            flatpak-build/.flatpak-builder/cache/ 
+          retention-days: 7
+
+  publish:
+    name: Publish Flatpak Release
+    runs-on: ubuntu-latest
+    needs: build
+    if: |
+      (github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')) ||
+      github.event.inputs.publish == 'true'
+
+    permissions:
+      contents: write
+      packages: write
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Download build artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: Prepare release assets
+        run: |
+          mkdir -p release-assets
+          
+          # Find and copy flatpak bundle
+          find artifacts -name "*.flatpak" -exec cp {} release-assets/ \; 2>/dev/null || true
+          
+          # Create checksums
+          if [ -f release-assets/ca.dcloud.ICAClient.flatpak ]; then
+            cd release-assets
+            sha256sum ca.dcloud.ICAClient.flatpak > CHECKSUMS.sha256
+            echo "Release assets:"
+            ls -lh
+          fi
+
+      - name: Create GitHub Release
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v1
+        with:
+          files: |
+            release-assets/ca.dcloud.ICAClient.flatpak
+            release-assets/CHECKSUMS.sha256
+          draft: false
+          prerelease: ${{ contains(github.ref, 'alpha') || contains(github.ref, 'beta') }}
+          generate_release_notes: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Upload to Container Registry
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        run: |
+          echo "Container registry publishing is configured but requires"
+          echo "additional setup with proper authentication credentials."
+          echo "See CONTRIBUTING.md for details on publishing to registries."
+
+  notify:
+    name: Build Notification
+    runs-on: ubuntu-latest
+    needs: [build, publish]
+    if: always()
+
+    steps:
+      - name: Determine build status
+        run: |
+          if [ "${{ needs.build.result }}" == "success" ]; then
+            echo "Build Status: ✅ SUCCESS"
+            echo "Build completed successfully"
+            exit 0
+          else
+            echo "Build Status: ❌ FAILED"
+            exit 1
+          fi

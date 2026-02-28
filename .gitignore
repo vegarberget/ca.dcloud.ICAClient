@@ -1,2 +1,39 @@
 icaclient
 .flatpak-builder
+# Build artifacts
+flatpak-build/
+
+# Build outputs
+build.log
+build-report.md
+*.flatpak
+dist/
+
+# Temporary files
+*.tmp
+*.swp
+*.swo
+*~
+.DS_Store
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Cache
+.cache/
+*.cache
+
+# Environment
+.env
+.env.local
+*.env
+
+# Artifacts from workflows
+artifacts/
+release-assets/
+
+# Logs
+*.log

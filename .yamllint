@@ -1,0 +1,17 @@
+---
+# yamllint configuration file
+# See: https://yamllint.readthedocs.io/
+
+extends: default
+
+rules:
+  line-length:
+    max: 120
+    level: warning
+  indentation:
+    spaces: 2
+  trailing-spaces: enable
+  truthy: disable
+  comments:
+    min-spaces-from-content: 1
+  comments-indentation: {}

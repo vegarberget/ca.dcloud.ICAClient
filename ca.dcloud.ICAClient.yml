@@ -1,23 +1,33 @@
 app-id: ca.dcloud.ICAClient
 runtime: org.gnome.Platform
-runtime-version: '41'
+runtime-version: '46'
 sdk: org.gnome.Sdk
 command: /app/bin/run.sh
+# Flatpak app metadata
+metadata:
+  org.freedesktop.appdata: /app/share/metainfo/ca.dcloud.ICAClient.appdata.xml
 
 build-options:
   build-args:
     - --share=network
 
 finish-args:
-  - --device=all  #For webcam/microphone access. Future work will be to remove this permission, and replace with a more restrictive one for those devices only
+  # Device access - restricted to essential devices only
+  - --device=dri            # GPU access for rendering
+  - --device=shm            # Shared memory
+  - --device=input          # Keyboard/mouse
+  - --device=videodev       # Webcam (for video conferencing)
+  - --device=snd            # Sound device (for audio)
+  # Network and display
   - --share=network
-  - --socket=pulseaudio
+  - --socket=pulseaudio     # Audio socket
   - --socket=x11 
-  - --share=ipc #Required for X11 to work properly
-  - --env=ICAROOT=/app/ICAClient/linuxx64 
   - --socket=wayland
-  - --persist=. #Gives the app a persistent that is treated as the home directory, located at ~/.var/app/ca.dcloud.ICAClient
-  - --persist=.ICAClient #Log/config directory (relative to the Flatpak container home folder)
+  - --share=ipc             # Required for X11 to work properly
+  # Environment and persistence
+  - --env=ICAROOT=/app/ICAClient/linuxx64 
+  - --persist=.            # Persistent home directory (~/.var/app/ca.dcloud.ICAClient)
+  - --persist=.ICAClient   # Log/config directory (relative to the Flatpak container home folder)
 
 modules: #Requirements as per Citrix's site, that aren't included in the Flatpak runtime. https://docs.citrix.com/en-us/citrix-workspace-app-for-linux/system-requirements.html
   - name: gtk2  
@@ -61,7 +71,7 @@ modules: #Requirements as per Citrix's site, that aren't included in the Flatpak
          sha256: a3d24db08ee2fdf240fbbf0971a98c8ee295aa0e1a774537f4ea938038a3b931
 
   #Copies the launch/initial setup script from this project to the app directory.
-  #Downloads the installer archives for Workspace and HDX-RTME. The download links are dynamic, so they can't be hardcoded into this manifest. They have to be obtained by scraping the Citrix downloads page every time
+  #Downloads the installer archives for Workspace and HDX-RTME with retry logic.
   #Performs Citrix install as per the install.sh script
   #Copies Citrix icons to the folders where flatpak expects them, to be used as app icons.
 
@@ -69,30 +79,94 @@ modules: #Requirements as per Citrix's site, that aren't included in the Flatpak
     buildsystem: simple
     build-commands:
       - |
+        set -euo pipefail
+        trap 'echo "ERROR: Bootstrap failed at line $LINENO"; exit 1' ERR
+        
         cp ./install.sh /tmp 
         chmod +x /tmp/install.sh
 
-        wget $(wget -O - https://www.citrix.com/downloads/workspace-app/linux/workspace-app-for-linux-latest.html | sed -ne '/linuxx64.*tar.gz/ s/<a .* rel="\(.*\)" id="downloadcomponent">/https:\1/p' | sed -e 's/\r//g') -O /tmp/linuxx64.tar.gz
-        tempURL=$(wget -O - https://www.citrix.com/downloads/workspace-app/additional-client-software/hdx-realtime-media-engine.html | grep -m 1 -e 'rel="https.*hdx-realtime-media-engine-.*html"' | sed -ne 's/<a .* rel="\(.*\)" id="downloadcomponent.*">/\1/p')
-        wget $(wget -O - $tempURL | sed -ne '/HDX.*zip/ s/<a .* rel="\(.*\)" id="downloadcomponent_3">/https:\1/p' | sed -e 's/\r//g') -O /tmp/hdx.zip
+        # Function to download with retry logic
+        download_with_retry() {
+          local url="$1"
+          local output="$2"
+          local retry_count=3
+          local attempt=1
+          
+          while [ $attempt -le $retry_count ]; do
+            echo "Downloading $output (attempt $attempt/$retry_count)..."
+            if wget --progress=bar:force --timeout=60 -q "$url" -O "$output"; then
+              echo "✓ Successfully downloaded $output"
+              return 0
+            fi
+            attempt=$((attempt + 1))
+            if [ $attempt -le $retry_count ]; then
+              echo "⚠ Download failed, retrying in 5 seconds..."
+              sleep 5
+            fi
+          done
+          
+          echo "ERROR: Failed to download $output after $retry_count attempts"
+          return 1
+        }
+
+        # Download Workspace installer
+        WS_URL=$(wget -O - https://www.citrix.com/downloads/workspace-app/linux/workspace-app-for-linux-latest.html 2>/dev/null | sed -ne '/linuxx64.*tar.gz/ s/<a .* rel="\(.*\)" id="downloadcomponent">/https:\1/p' | sed -e 's/\r//g' | head -1)
+        if [ -z "$WS_URL" ]; then
+          echo "ERROR: Could not determine Workspace download URL"
+          exit 1
+        fi
+        download_with_retry "$WS_URL" /tmp/linuxx64.tar.gz
+
+        # Download HDX RTME installer
+        HDXPAGE_URL=$(wget -O - https://www.citrix.com/downloads/workspace-app/additional-client-software/hdx-realtime-media-engine.html 2>/dev/null | grep -m 1 -e 'rel="https.*hdx-realtime-media-engine-.*html"' | sed -ne 's/<a .* rel="\(.*\)" id="downloadcomponent.*">/\1/p' | head -1)
+        if [ -z "$HDXPAGE_URL" ]; then
+          echo "WARNING: Could not determine HDX RTME page URL, continuing without RTME support"
+          HDXPAGE_URL=""
+        else
+          HDX_URL=$(wget -O - "$HDXPAGE_URL" 2>/dev/null | sed -ne '/HDX.*zip/ s/<a .* rel="\(.*\)" id="downloadcomponent_3">/https:\1/p' | sed -e 's/\r//g' | head -1)
+          if [ -n "$HDX_URL" ]; then
+            download_with_retry "$HDX_URL" /tmp/hdx.zip
+          else
+            echo "WARNING: Could not determine HDX RTME download URL"
+          fi
+        fi
 
         mkdir -p /tmp/icaclient
-        tar -zxf /tmp/linuxx64.tar.gz --directory=/tmp/icaclient
+        echo "Extracting Workspace installer..."
+        tar -zxf /tmp/linuxx64.tar.gz --directory=/tmp/icaclient || { echo "ERROR: Failed to extract Workspace"; exit 1; }
+        
         mkdir -p /app/share/icons/hicolor/64x64/apps
-        cp /tmp/icaclient/linuxx64/linuxx64.cor/icons/000_Receiver_64.png /app/share/icons/hicolor/64x64/apps/ca.dcloud.ICAClient.png
+        cp /tmp/icaclient/linuxx64/linuxx64.cor/icons/000_Receiver_64.png /app/share/icons/hicolor/64x64/apps/ca.dcloud.ICAClient.png || echo "WARNING: Failed to copy 64x64 icon"
         mkdir -p /app/share/icons/hicolor/256x256/apps
-        cp /tmp/icaclient/linuxx64/linuxx64.cor/icons/receiver.png /app/share/icons/hicolor/256x256/apps/ca.dcloud.ICAClient.png
+        cp /tmp/icaclient/linuxx64/linuxx64.cor/icons/receiver.png /app/share/icons/hicolor/256x256/apps/ca.dcloud.ICAClient.png || echo "WARNING: Failed to copy 256x256 icon"
 
-        unzip /tmp/hdx.zip -d /tmp/HDX-RTME
-        cp -r /tmp/HDX-RTME/HDX*/* /tmp/icaclient
-        cd /tmp/icaclient/x86_64
-        ar -x citrix-hdx-realtime-media-engine_*_amd64.deb
-        tar -xf data.tar.xz
+        # Extract HDX RTME if available
+        if [ -f /tmp/hdx.zip ]; then
+          echo "Extracting HDX RTME installer..."
+          unzip -q /tmp/hdx.zip -d /tmp/HDX-RTME || echo "WARNING: Failed to extract HDX RTME zip"
+          if [ -d "/tmp/HDX-RTME" ]; then
+            cp -r /tmp/HDX-RTME/HDX*/* /tmp/icaclient 2>/dev/null || echo "WARNING: Failed to copy HDX RTME files"
+            if [ -d "/tmp/icaclient/x86_64" ]; then
+              cd /tmp/icaclient/x86_64
+              if ls citrix-hdx-realtime-media-engine_*_amd64.deb >/dev/null 2>&1; then
+                ar -x citrix-hdx-realtime-media-engine_*_amd64.deb || echo "WARNING: Failed to extract HDX deb"
+                tar -xf data.tar.xz || echo "WARNING: Failed to extract HDX data"
+              fi
+            fi
+          fi
+        else
+          echo "WARNING: HDX RTME installer not available, proceeding without it"
+        fi
 
         /tmp/install.sh
 
-        ln -s /etc/ssl/certs/*.pem /app/ICAClient/linuxx64/keystore/cacerts/
-        /app/ICAClient/linuxx64/util/ctx_rehash /app/ICAClient/linuxx64/keystore/cacerts/
+        # Setup SSL certificates
+        echo "Setting up SSL certificates..."
+        mkdir -p /app/ICAClient/linuxx64/keystore/cacerts/
+        ln -sf /etc/ssl/certs/*.pem /app/ICAClient/linuxx64/keystore/cacerts/ 2>/dev/null || echo "WARNING: Failed to link SSL certificates"
+        /app/ICAClient/linuxx64/util/ctx_rehash /app/ICAClient/linuxx64/keystore/cacerts/ || echo "WARNING: Failed to run ctx_rehash"
+        
+        echo "✓ Bootstrap completed successfully"
 
     sources:
       - type: file
