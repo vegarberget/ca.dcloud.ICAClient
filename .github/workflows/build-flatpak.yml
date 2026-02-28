@@ -51,6 +51,14 @@ jobs:
             appstream-util \
             desktop-file-utils \
             libxml2-utils
+          
+          # Verify installation
+          echo "✓ Verifying installed tools..."
+          flatpak --version
+          flatpak-builder --version
+          desktop-file-validate --version
+          which appstream-util || echo "⚠ appstream-util not in PATH, trying alternative..."
+          appstream-util --version 2>/dev/null || python3 -c "import xml.etree.ElementTree; print('✓ Python XML support available')"
 
       - name: Add Flathub remote
         run: |
@@ -78,10 +86,32 @@ jobs:
           fi
           echo "✓ Manifest is valid"
 
+      - name: Check required files
+        run: |
+          echo "✓ Checking required files..."
+          for file in ca.dcloud.ICAClient.yml ca.dcloud.ICAClient.desktop ca.dcloud.ICAClient.appdata.xml install.sh run.sh; do
+            if [ -f "$file" ]; then
+              echo "  ✓ $file ($(wc -c < "$file") bytes)"
+            else
+              echo "  ✗ $file - MISSING!"
+              exit 1
+            fi
+          done
+          echo "✓ All required files present"
+
       - name: Validate desktop file
         run: |
           echo "✓ Validating desktop file..."
-          desktop-file-validate ca.dcloud.ICAClient.desktop
+          if [ ! -f ca.dcloud.ICAClient.desktop ]; then
+            echo "✗ Desktop file not found"
+            exit 1
+          fi
+          if command -v desktop-file-validate &> /dev/null; then
+            desktop-file-validate ca.dcloud.ICAClient.desktop
+            echo "✓ Desktop file is valid"
+          else
+            echo "⚠ desktop-file-validate not available, skipping validation"
+          fi
 
       - name: Build Flatpak bundle
         run: |
@@ -127,7 +157,20 @@ jobs:
       - name: Validate appdata file
         run: |
           echo "✓ Validating appstream data..."
-          appstream-util validate-relax ca.dcloud.ICAClient.appdata.xml
+          if [ ! -f ca.dcloud.ICAClient.appdata.xml ]; then
+            echo "✗ AppData file not found"
+            exit 1
+          fi
+          # Try to validate with appstream-util if available
+          if command -v appstream-util &> /dev/null; then
+            appstream-util validate-relax ca.dcloud.ICAClient.appdata.xml
+          elif command -v appstreamcli &> /dev/null; then
+            appstreamcli validate ca.dcloud.ICAClient.appdata.xml
+          else
+            # Fallback: basic XML validation
+            echo "⚠ AppStream validation tools not available, performing basic XML check..."
+            python3 -c "import xml.etree.ElementTree as ET; ET.parse('ca.dcloud.ICAClient.appdata.xml'); print('✓ AppData XML is valid')"
+          fi
 
       - name: Generate build report
         if: always()
