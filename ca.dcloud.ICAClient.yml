@@ -21,54 +21,54 @@ finish-args:
   # Network and display
   - --share=network
   - --socket=pulseaudio     # Audio socket
-  - --socket=x11 
+  - --socket=x11
   - --socket=wayland
   - --share=ipc             # Required for X11 to work properly
   # Environment and persistence
-  - --env=ICAROOT=/app/ICAClient/linuxx64 
+  - --env=ICAROOT=/app/ICAClient/linuxx64
   - --persist=.            # Persistent home directory (~/.var/app/ca.dcloud.ICAClient)
   - --persist=.ICAClient   # Log/config directory (relative to the Flatpak container home folder)
 
 modules: #Requirements as per Citrix's site, that aren't included in the Flatpak runtime. https://docs.citrix.com/en-us/citrix-workspace-app-for-linux/system-requirements.html
-  - name: gtk2  
+  - name: gtk2
     buildsystem: autotools
     sources:
-       - type: archive
-         url: http://archive.ubuntu.com/ubuntu/pool/main/g/gtk+2.0/gtk+2.0_2.24.33.orig.tar.xz
-         sha256: ac2ac757f5942d318a311a54b0c80b5ef295f299c2a73c632f6bfb1ff49cc6da         
+      - type: archive
+        url: http://archive.ubuntu.com/ubuntu/pool/main/g/gtk+2.0/gtk+2.0_2.24.33.orig.tar.xz
+        sha256: ac2ac757f5942d318a311a54b0c80b5ef295f299c2a73c632f6bfb1ff49cc6da
 
   - name: libjson-c #Listed as a requirement "for instrumentation", not sure what that refers to
     buildsystem: cmake
     sources:
-       - type: archive
-         url: http://archive.ubuntu.com/ubuntu/pool/main/j/json-c/json-c_0.15.orig.tar.gz
-         sha256: 4ba9a090a42cf1e12b84c64e4464bb6fb893666841d5843cc5bef90774028882
+      - type: archive
+        url: http://archive.ubuntu.com/ubuntu/pool/main/j/json-c/json-c_0.15.orig.tar.gz
+        sha256: 4ba9a090a42cf1e12b84c64e4464bb6fb893666841d5843cc5bef90774028882
 
   - name: libxerces-c #Listed as a requirement for the self-service UI
     buildsystem: autotools
     sources:
-       - type: archive
-         url: http://archive.ubuntu.com/ubuntu/pool/universe/x/xerces-c/xerces-c_3.2.3+debian.orig.tar.xz
-         sha256: 25652e6ed8a55e9273d6514f7e2744678b6d51f5d88c03d4219fac0310393f8d  
+      - type: archive
+        url: http://archive.ubuntu.com/ubuntu/pool/universe/x/xerces-c/xerces-c_3.2.3+debian.orig.tar.xz
+        sha256: 25652e6ed8a55e9273d6514f7e2744678b6d51f5d88c03d4219fac0310393f8d
 
   - name: gst-plugins-ugly  #Listed as requirement for HDX RT video compression and MediaStream Windows media redirection
     buildsystem: meson
     sources:
-       - type: archive
-         url: https://gstreamer.freedesktop.org/src/gst-plugins-ugly/gst-plugins-ugly-1.18.5.tar.xz
-         sha256: df32803e98f8a9979373fa2ca7e05e62f977b1097576d3a80619d9f5c69f66d9
+      - type: archive
+        url: https://gstreamer.freedesktop.org/src/gst-plugins-ugly/gst-plugins-ugly-1.18.5.tar.xz
+        sha256: df32803e98f8a9979373fa2ca7e05e62f977b1097576d3a80619d9f5c69f66d9
 
   - name: gnome-keyring #Listed as a requirement for Service Continuity
     buildsystem: simple
     build-commands:
-       - |
-         ./configure --prefix=/app --with-pkcs11-config=/app/share/p11-kit/modules --with-pkcs11-modules=/app/share/p11-kit/modules
+      - |
+        ./configure --prefix=/app --with-pkcs11-config=/app/share/p11-kit/modules --with-pkcs11-modules=/app/share/p11-kit/modules
          make
          make install
     sources:
-       - type: archive
-         url: http://archive.ubuntu.com/ubuntu/pool/main/g/gnome-keyring/gnome-keyring_40.0.orig.tar.xz
-         sha256: a3d24db08ee2fdf240fbbf0971a98c8ee295aa0e1a774537f4ea938038a3b931
+      - type: archive
+        url: http://archive.ubuntu.com/ubuntu/pool/main/g/gnome-keyring/gnome-keyring_40.0.orig.tar.xz
+        sha256: a3d24db08ee2fdf240fbbf0971a98c8ee295aa0e1a774537f4ea938038a3b931
 
   #Copies the launch/initial setup script from this project to the app directory.
   #Downloads the installer archives for Workspace and HDX-RTME with retry logic.
@@ -81,8 +81,8 @@ modules: #Requirements as per Citrix's site, that aren't included in the Flatpak
       - |
         set -euo pipefail
         trap 'echo "ERROR: Bootstrap failed at line $LINENO"; exit 1' ERR
-        
-        cp ./install.sh /tmp 
+
+        cp ./install.sh /tmp
         chmod +x /tmp/install.sh
 
         # Function to download with retry logic
@@ -91,7 +91,7 @@ modules: #Requirements as per Citrix's site, that aren't included in the Flatpak
           local output="$2"
           local retry_count=3
           local attempt=1
-          
+
           while [ $attempt -le $retry_count ]; do
             echo "Downloading $output (attempt $attempt/$retry_count)..."
             if wget --progress=bar:force --timeout=60 -q "$url" -O "$output"; then
@@ -104,7 +104,7 @@ modules: #Requirements as per Citrix's site, that aren't included in the Flatpak
               sleep 5
             fi
           done
-          
+
           echo "ERROR: Failed to download $output after $retry_count attempts"
           return 1
         }
@@ -112,35 +112,35 @@ modules: #Requirements as per Citrix's site, that aren't included in the Flatpak
         # Download Workspace installer
         echo "Fetching Workspace download page..."
         WS_URL=$(wget -O - https://www.citrix.com/downloads/workspace-app/linux/workspace-app-for-linux-latest.html 2>/dev/null | grep -oP 'rel="\K//downloads\.citrix\.com/[^"]*linuxx64[^"]*\.tar\.gz' | head -1)
-        
+
         if [ -z "$WS_URL" ]; then
           echo "ERROR: Could not determine Workspace download URL"
           echo "Trying alternative extraction method..."
           WS_URL=$(wget -O - https://www.citrix.com/downloads/workspace-app/linux/workspace-app-for-linux-latest.html 2>/dev/null | grep -oP '//downloads\.citrix\.com/[^"]*linuxx64[^"]*\.tar\.gz' | head -1)
         fi
-        
+
         if [ -z "$WS_URL" ]; then
           echo "ERROR: Could not extract Workspace download URL from page"
           exit 1
         fi
-        
+
         # Convert protocol-relative URL to https
         WS_URL="https:${WS_URL}"
         echo "Workspace URL: $WS_URL"
-        
+
         download_with_retry "$WS_URL" /tmp/linuxx64.tar.gz
 
         # Download HDX RTME installer
         echo "Fetching HDX RTME download page..."
         HDXPAGE_URL=$(wget -O - https://www.citrix.com/downloads/workspace-app/additional-client-software/hdx-realtime-media-engine.html 2>/dev/null | grep -oP 'rel="\Khttps://[^"]*hdx-realtime-media-engine[^"]*\.html' | head -1)
-        
+
         if [ -z "$HDXPAGE_URL" ]; then
           echo "WARNING: Could not determine HDX RTME page URL, continuing without RTME support"
           HDXPAGE_URL=""
         else
           echo "HDX RTME page: $HDXPAGE_URL"
           HDX_URL=$(wget -O - "$HDXPAGE_URL" 2>/dev/null | grep -oP 'rel="\K//downloads\.citrix\.com/[^"]*hdx[^"]*\.zip' | head -1)
-          
+
           if [ -z "$HDX_URL" ]; then
             echo "WARNING: Could not determine HDX RTME download URL from page"
           else
@@ -154,7 +154,7 @@ modules: #Requirements as per Citrix's site, that aren't included in the Flatpak
         mkdir -p /tmp/icaclient
         echo "Extracting Workspace installer..."
         tar -zxf /tmp/linuxx64.tar.gz --directory=/tmp/icaclient || { echo "ERROR: Failed to extract Workspace"; exit 1; }
-        
+
         mkdir -p /app/share/icons/hicolor/64x64/apps
         cp /tmp/icaclient/linuxx64/linuxx64.cor/icons/000_Receiver_64.png /app/share/icons/hicolor/64x64/apps/ca.dcloud.ICAClient.png || echo "WARNING: Failed to copy 64x64 icon"
         mkdir -p /app/share/icons/hicolor/256x256/apps
@@ -185,7 +185,7 @@ modules: #Requirements as per Citrix's site, that aren't included in the Flatpak
         mkdir -p /app/ICAClient/linuxx64/keystore/cacerts/
         ln -sf /etc/ssl/certs/*.pem /app/ICAClient/linuxx64/keystore/cacerts/ 2>/dev/null || echo "WARNING: Failed to link SSL certificates"
         /app/ICAClient/linuxx64/util/ctx_rehash /app/ICAClient/linuxx64/keystore/cacerts/ || echo "WARNING: Failed to run ctx_rehash"
-        
+
         echo "✓ Bootstrap completed successfully"
 
     sources:
@@ -206,7 +206,7 @@ modules: #Requirements as per Citrix's site, that aren't included in the Flatpak
   #   sources:
   #      - type: archive
   #        url: http://archive.ubuntu.com/ubuntu/pool/main/libc/libcanberra/libcanberra_0.30.orig.tar.xz
-  #        sha256: c2b671e67e0c288a69fc33dc1b6f1b534d07882c2aceed37004bf48c601afa72   
+  #        sha256: c2b671e67e0c288a69fc33dc1b6f1b534d07882c2aceed37004bf48c601afa72
   #
   # - name: perl
   #   sources:
@@ -219,7 +219,7 @@ modules: #Requirements as per Citrix's site, that aren't included in the Flatpak
   #         - ./Configure -des -Dprefix=/app
   #   post-install:
   #     - "find /app/lib/perl5 -type f -exec chmod u+w {} \\;"
-  #     
+  #
   # - name: openssl
   #   buildsystem: simple
   #   build-commands:
@@ -248,7 +248,7 @@ modules: #Requirements as per Citrix's site, that aren't included in the Flatpak
         chmod +x /app/bin/run.sh
     sources:
       - type: file
-        path: ./run.sh  
+        path: ./run.sh
 
   - name: Appdata-xml
     buildsystem: simple
